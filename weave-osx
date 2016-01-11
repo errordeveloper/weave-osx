@@ -43,7 +43,7 @@ osx_setup_commands() {
   unset DOCKER_CLIENT_ARGS
   echo "sudo route add -net ${weave_ipam_default_subnet} ${vm_ip}"
   echo "sudo route add -host ${weave_dns_ip} ${vm_ip}"
-  echo "sudo mkdir /etc/resolver/"
+  echo "sudo mkdir -p /etc/resolver/"
   echo "echo nameserver ${weave_dns_ip} | sudo tee /etc/resolver/${weave_dns_domain}"
 }
 
