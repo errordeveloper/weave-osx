@@ -63,6 +63,8 @@ cleanup_dead_routes() {
   ## 192.168.99.100     link#15            UHLWIi          1     1392 vboxnet
   ## 192.168.99.101     link#15            UHLWIi          1       84 vboxnet
 
+  ## TODO: Docker bridge IPs can be: 172.17-31.x.x/16, 192.168.x.x/20 or 10.x.x.x/24
+
   netstat -f inet -n -r | awk '
     $1 == "10.32/12" && $2 ~ /^[0-9]*\.[0-9]*\.[0-9]*\.[0-9]*$/ && $6 ~ /^(vboxnet|vmnet)/ {
       print("Will delete route to " $1 " via " $2 " (iface " $6 "), if " $1 " is unreachable")
