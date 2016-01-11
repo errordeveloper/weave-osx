@@ -10,18 +10,19 @@ docker_machine_create() {
 
 weave_launch() {
   for vm in $@ ; do
-    export DOCKER_CLIENT_ARGS="$(docker-machine config ${vm})"
-    weave launch $(docker-machine ip $@)
-    weave expose -h "${vm}.weave.local"
-    unset DOCKER_CLIENT_ARGS
+    env DOCKER_CLIENT_ARGS="$(docker-machine config ${vm})" \
+      weave launch $(docker-machine ip $@)
+  done
+  for vm in $@ ; do
+    env DOCKER_CLIENT_ARGS="$(docker-machine config ${vm})" \
+      weave expose -h "${vm}.weave.local"
   done
 }
 
 osx_setup_commands() {
   export DOCKER_CLIENT_ARGS="$(docker-machine config $1)"
-  ## TODO: use `weave report -f` instead of `jq`
-  weave_ipam_default_subnet=$(weave report | jq --raw-output ".IPAM.DefaultSubnet")
-  weave_dns_domain=$(weave report | jq --raw-output ".DNS.Domain" | sed "s/^\(.*\)\.$/\1/")
+  weave_ipam_default_subnet=$(weave report -f "{{.IPAM.DefaultSubnet}}")
+  weave_dns_domain=$(weave report -f "{{.DNS.Domain}}" | sed "s/^\(.*\)\.$/\1/")
   vm_ip=$(docker-machine ip $1)
   unset DOCKER_CLIENT_ARGS
   echo "sudo route add -net ${weave_ipam_default_subnet} ${vm_ip}"
