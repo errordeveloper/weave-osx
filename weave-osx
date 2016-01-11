@@ -1,6 +1,21 @@
 #!/bin/bash -xe
 
-driver=${DOCKER_MACHINE_DRIVER:-"virtualbox"} ## TODO: validate if this is not a cloud-based driver, as those work work with this
+print_usage() {
+cat >&2 <<EOF
+This script helps Docker Machine users on Mac OS X to connect to containers Weave Net
+
+Usage:
+
+weave-osx launch <list of existing Docker Machine VMs>
+
+weave-osx create <number of VMs you would like to use> [virtualbox|vmwarefusion]
+weave-osx delete <TBD>
+
+weave-osx setup-routes-and-dns <weave-enabled-vm>
+weave-osx reset-routes-and-dns [<weave-enabled-vm>]
+
+EOF
+}
 
 docker_machine_create() {
   for vm in $@ ; do
@@ -24,8 +39,6 @@ osx_setup_commands() {
   weave_ipam_default_subnet=$(weave report -f "{{.IPAM.DefaultSubnet}}")
   weave_dns_domain=$(weave report -f "{{.DNS.Domain}}" | sed "s/^\(.*\)\.$/\1/")
   weave_dns_ip=$(weave report -f "{{.DNS.Address}}" | sed 's/^\([0-9]*\.[0-9]*\.[0-9]*\.[0-9]*\):[1-9]*$/\1/')
-
-  ## TODO: get DNS address from the report as well, and add router for that
   vm_ip=$(docker-machine ip $1)
   unset DOCKER_CLIENT_ARGS
   echo "sudo route add -net ${weave_ipam_default_subnet} ${vm_ip}"
@@ -38,16 +51,52 @@ head_node() {
   echo $1
 }
 
-## TODO: creation should be an opt-in
+cleanup_dead_routes() {
+  echo "Checking routing table"
+  ## Look for entries with default Weave Net range and defailt Docker bridge IP like this
+  ## 10.32/12           192.168.131.156    UGSc            2       13  vmnet8
+  ## 172.17.0.1         192.168.131.156    UGSc            2       13  vmnet8
+  ## And ignore stuff like
+  ## 172.16.29/24       link#11            UC              3        0  vmnet2
+  ## 172.16.29.255      link#11            UHLWbI          1      250  vmnet2
+  ## 192.168.99         link#15            UC              6        0 vboxnet
+  ## 192.168.99.100     link#15            UHLWIi          1     1392 vboxnet
+  ## 192.168.99.101     link#15            UHLWIi          1       84 vboxnet
 
-number_of_vms=$1 ## TODO: validate if this is a number and it's greater then 1
+  netstat -f inet -n -r | awk '
+    $1 == "10.32/12" && $2 ~ /^[0-9]*\.[0-9]*\.[0-9]*\.[0-9]*$/ && $6 ~ /^(vboxnet|vmnet)/ {
+      print("Will delete route to " $1 " via " $2 " (iface " $6 "), if " $1 " is unreachable")
+      system("ping -c3 " $2 " || sudo route delete -net 10.32.0.0/12")
+    }
+    $1 == "172.17.0.1" && $2 ~ /^[0-9]*\.[0-9]*\.[0-9]*\.[0-9]*$/ && $6 ~ /^(vboxnet|vmnet)/ {
+      print("Will delete route to " $1 " via " $2 " (iface " $6 "), if " $1 " is unreachable")
+      system("ping -c3 " $2 " || sudo route delete -host 172.17.0.1")
+    }
+  '
+}
 
-vm_name_prefix=${VM_NAME_PREFIX:-"weave-${driver}"}
-
-vms=$(seq -f "${vm_name_prefix}-%g" $number_of_vms)
-
-docker_machine_create $vms
-
-weave_launch $vms
-
-osx_setup_commands $(head_node $vms)
+case $1 in
+  launch)
+    ;;
+  create)
+    number_of_vms=$2 ## TODO: validate if this is a number and it's greater then 1
+    driver=${3:-"virtualbox"} ## TODO: validate if this is not a cloud-based driver, as those work work with this
+    vm_name_prefix=${VM_NAME_PREFIX:-"weave-${driver}"}
+    vms=$(seq -f "${vm_name_prefix}-%g" $number_of_vms)
+    docker_machine_create $vms ## TODO: creation should be an opt-in
+    weave_launch $vms
+    osx_setup_commands $(head_node $vms)
+    ;;
+  delete)
+    ;;
+  setup-routes-and-dns)
+    ;;
+  reset-routes-and-dns)
+    ;;
+  cleanup-dead-routes)
+    cleanup_dead_routes
+    ;;
+  *)
+    print_usage
+    ;;
+esac
