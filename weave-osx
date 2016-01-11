@@ -1,4 +1,8 @@
-#!/bin/bash -xe
+#!/bin/bash -x
+
+set -o errexit
+set -o nounset
+set -o pipefail
 
 print_usage() {
 cat >&2 <<EOF
@@ -17,6 +21,10 @@ weave-osx reset-routes-and-dns [<weave-enabled-vm>]
 EOF
 }
 
+check_weave_is_running() {
+  env DOCKER_CLIENT_ARGS="$(docker-machine config $1)" weave status >/dev/null
+}
+
 docker_machine_create() {
   for vm in $@ ; do
     docker-machine create --driver ${driver} "${vm}"
@@ -26,7 +34,8 @@ docker_machine_create() {
 weave_launch() {
   for vm in $@ ; do
     env DOCKER_CLIENT_ARGS="$(docker-machine config ${vm})" \
-      weave launch $(docker-machine ip $@)
+      weave launch $([ $# -gt 1 ] && docker-machine ip $@) \
+      || check_weave_is_running # status check handle failures when Weave Net router is already running
   done
   for vm in $@ ; do
     env DOCKER_CLIENT_ARGS="$(docker-machine config ${vm})" \
@@ -41,10 +50,19 @@ osx_setup_commands() {
   weave_dns_ip=$(weave report -f "{{.DNS.Address}}" | sed 's/^\([0-9]*\.[0-9]*\.[0-9]*\.[0-9]*\):[1-9]*$/\1/')
   vm_ip=$(docker-machine ip $1)
   unset DOCKER_CLIENT_ARGS
-  echo "sudo route add -net ${weave_ipam_default_subnet} ${vm_ip}"
-  echo "sudo route add -host ${weave_dns_ip} ${vm_ip}"
-  echo "sudo mkdir -p /etc/resolver/"
-  echo "echo nameserver ${weave_dns_ip} | sudo tee /etc/resolver/${weave_dns_domain}"
+  echo "route add -net ${weave_ipam_default_subnet} ${vm_ip}"
+  echo "route add -host ${weave_dns_ip} ${vm_ip}"
+  echo "mkdir -p /etc/resolver/"
+  echo "echo nameserver ${weave_dns_ip} > /etc/resolver/${weave_dns_domain}"
+}
+
+run_osx_setup_commands() {
+  setup_commands="$(osx_setup_commands $1)"
+  printf "Please confirm if you are happy to run the following commands as root\n\n%s\n\n" "${setup_commands}"
+  printf "Please hit Return to config, or Control-C to cancel\n"
+  read
+  printf "Excellent, you migth need to enter you password now\n"
+  sudo bash -c "${setup_commands}"
 }
 
 head_node() {
@@ -77,21 +95,40 @@ cleanup_dead_routes() {
   '
 }
 
+bail_on_unsuported_driver() {
+  if ! [ $1 = "virtualbox" -o $1 = "vmwarefusion" ] ; then
+    echo "Drivers other then 'virtualbox' or 'vmwarefusion' are not supported"
+    exit 1
+  fi
+}
+
+
 case $1 in
   launch)
+    shift
+    vms=$@
+    for vm in $vms ; do
+      docker-machine status $vm | grep -q Running || exit 1
+      bail_on_unsuported_driver $(docker-machine inspect -f "{{.DriverName}}" ${vm})
+      weave_launch $vms
+      osx_setup_commands $(head_node ${vms})
+    done
     ;;
   create)
     number_of_vms=$2 ## TODO: validate if this is a number and it's greater then 1
-    driver=${3:-"virtualbox"} ## TODO: validate if this is not a cloud-based driver, as those work work with this
+    driver=${3:-"virtualbox"}
+    bail_on_unsuported_driver $driver
     vm_name_prefix=${VM_NAME_PREFIX:-"weave-${driver}"}
-    vms=$(seq -f "${vm_name_prefix}-%g" $number_of_vms)
+    vms=$(seq -f "${vm_name_prefix}-%g" ${number_of_vms})
     docker_machine_create $vms ## TODO: creation should be an opt-in
     weave_launch $vms
-    osx_setup_commands $(head_node $vms)
+    osx_setup_commands $(head_node ${vms})
     ;;
   delete)
     ;;
   setup-routes-and-dns)
+    check_weave_is_running $2
+    run_osx_setup_commands $2
     ;;
   reset-routes-and-dns)
     ;;
